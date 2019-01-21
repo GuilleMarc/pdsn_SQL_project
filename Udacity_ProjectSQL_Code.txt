@@ -1,0 +1,219 @@
+/* SQL: Project 1, Udacity */
+/* Guillermo Marcillo; Last Update: 9/11/2018 */
+
+/* ############################ Query One: ###############################################################
+/* Rental shares of family and non-family movies at Sakila */
+/* Create a query that lists movie, film category, and the number of times it has been rented out */
+WITH rentals_genre AS
+     (
+	SELECT film_title, category_name, rental_count
+	FROM
+	    (SELECT fc.film_id film_id, c.name category_name, f.title film_title
+	     FROM category c
+	     JOIN film_category fc
+	     ON c.category_id = fc.category_id
+	     JOIN film f
+	     ON f.film_id= fc.film_id
+	     JOIN inventory i
+	     ON f.film_id = i.inventory_id
+	     JOIN rental r
+	     ON i.inventory_id = rental_id
+	     ORDER BY f.title
+	     )t4
+	JOIN
+            (SELECT film_id, 
+	            SUM(customers_item) rental_count
+	     FROM
+		(
+		 SELECT i.film_id film_id, t1.inventory_id inventory_id, t1.customers_item customers_item
+		 FROM inventory i
+		 JOIN
+			(
+			 SELECT inventory_id, 
+				COUNT(customer_id) customers_item
+			 FROM rental
+			 GROUP BY inventory_id
+			 ) t1
+	        ON i.inventory_id = t1.inventory_id
+	         ) t2
+		GROUP BY 1
+	     )t3
+ON t4.film_id = t3.film_id
+ORDER BY category_name, film_title
+     ),
+
+    final_rentals AS (SELECT film_title, category_name, rental_count,
+		             CASE WHEN category_name IN ('Animation','Children','Classics','Comedy','Family','Music') THEN 'yes'
+			     ELSE 'no' END AS family_oriented
+		      FROM rentals_genre
+		      )
+
+SELECT SUM(rental_count) total_rentals, family_oriented    /* final query */
+FROM final_rentals
+GROUP BY family_oriented;
+/* ############################ Query two: ###############################################################
+/* Monthly rental sales per store (Feb-May 2017) */
+WITH   sub AS (
+       SELECT staff_id,
+       payment_date,
+       DATE_TRUNC('month',payment_date) monthly,
+       DATE_PART('month',payment_date) month_name,
+       amount,
+       SUM(amount) OVER (PARTITION BY staff_id ORDER BY (DATE_TRUNC('month',payment_date))) AS agg_sales_monthly
+FROM payment
+ORDER BY staff_id, monthly),
+       
+      sales_table AS (
+	SELECT staff_id,
+		month_name,
+		CASE WHEN month_name=2 THEN 'February'
+		     WHEN month_name=3 THEN 'March'
+		     WHEN month_name=4 THEN 'April'
+		     ELSE 'May'
+		     END AS month_names,
+		agg_sales_monthly
+	FROM sub
+	ORDER BY staff_id, month_name)
+
+SELECT DISTINCT *
+FROM sales_table
+ORDER BY staff_id, month_name;
+/* ############################ Query three: ###############################################################
+/* What is the average rental time (days) for family oriented movies in the US and int. markets*/
+/* 1) films by genre */
+SELECT fc.film_id film_id, 
+       c.name category_name, 
+       f.title film_title,
+       CASE WHEN c.name IN ('Animation','Children','Classics','Comedy','Family','Music') THEN 'yes'
+	    ELSE 'no' END AS family_oriented
+FROM category c
+JOIN film_category fc
+ON c.category_id = fc.category_id
+JOIN film f
+ON f.film_id= fc.film_id
+JOIN inventory i
+ON f.film_id = i.inventory_id
+JOIN rental r
+ON i.inventory_id = rental_id;
+
+/* 2) Table of demographics*/
+
+SELECT  cu.customer_id,
+	cu.first_name ||' '|| cu.last_name AS customer_name,
+	a.address, 
+	a.district, 
+	ci.city, 
+	co.country
+FROM city ci
+JOIN country co
+ON co.country_id = ci.country_id
+JOIN address a
+ON ci.city_id = a.city_id
+JOIN customer cu
+ON a.address_id = cu.address_id;
+
+/* FINAL query: What is the average rental time (days) for family oriented movies in the US and int. markets*/
+SELECT fr.family_oriented, 
+       dm.market, 
+       AVG(fr.rental_time) avg_rental_time
+FROM
+(SELECT inv.film_id,
+       re.customer_id, 
+       re.inventory_id,
+       fg.film_title,
+       fg.category_name,
+       EXTRACT(day FROM (return_date - rental_date))AS rental_time,
+       fg.family_oriented
+FROM rental re
+JOIN inventory inv
+ON inv.inventory_id = re.customer_id
+JOIN
+(
+  SELECT fc.film_id film_id, c.name category_name, f.title film_title,
+         CASE WHEN c.name IN ('Animation','Children','Classics','Comedy','Family','Music') THEN 'yes'
+	      ELSE 'no' END AS family_oriented
+  FROM category c
+  JOIN film_category fc
+  ON c.category_id = fc.category_id
+  JOIN film f
+  ON f.film_id= fc.film_id
+  JOIN inventory i
+  ON f.film_id = i.inventory_id
+  JOIN rental r
+  ON i.inventory_id = rental_id) fg
+ON inv.film_id = fg.film_id
+)fr
+
+JOIN
+
+(
+SELECT  cu.customer_id,
+	cu.first_name ||' '|| cu.last_name AS customer_name,
+	a.address, 
+	a.district, 
+	ci.city, 
+	co.country,
+	CASE WHEN co.country = 'United States' THEN 'US'
+	     ELSE 'International' END AS market
+FROM city ci
+JOIN country co
+ON co.country_id = ci.country_id
+JOIN address a
+ON ci.city_id = a.city_id
+JOIN customer cu
+ON a.address_id = cu.address_id
+)dm
+
+ON fr.customer_id = dm.customer_id
+GROUP BY fr.family_oriented, 
+         dm.market
+ORDER BY 1,2;
+/* ############################ Query four: ###############################################################
+/*  How does rental sales per customer look like in the US? */
+/* Query 4 */
+/* Transactions per customer */
+/* Add demographics for each customer */
+SELECT customers.customer_name,
+       customers.address,
+       customers.country,
+       payments.count_payments,
+       payments.pay_amount 
+FROM
+(SELECT DISTINCT *
+FROM
+   (
+    SELECT py.customer_id customer_id, 
+           DATE_TRUNC('month',py.payment_date) pay_month, 
+           COUNT(py.amount) OVER window_month AS count_payments,
+           SUM(py.amount) OVER window_month AS pay_amount
+     FROM payment py
+     WINDOW window_month AS (PARTITION BY py.customer_id ORDER BY DATE_TRUNC('month',py.payment_date))
+   ) sub
+)payments
+
+JOIN
+
+(SELECT cu.customer_id customer_id,
+       cu.first_name || ' ' || cu.last_name AS customer_name,
+       ad.address address,
+       ad.district district,
+       ci.city city,
+       co.country country
+FROM customer cu
+JOIN address ad 
+ON ad.address_id = cu.address_id
+JOIN city ci
+ON ci.city_id = ad.city_id
+JOIN country co
+ON co.country_id = ci.country_id
+)customers
+
+ON payments.customer_id = customers.customer_id
+WHERE country = 'United States';
+
+/* Extra: What if Sakila wants to reward its top 10 customers in the States by sending them a discount card: */
+/* Query just need to include the following statement at the bottom:
+ORDER BY pay_amount DESC
+LIMIT 10; */
+
+
